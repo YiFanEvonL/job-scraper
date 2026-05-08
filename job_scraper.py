@@ -19,9 +19,9 @@ from email.mime.text import MIMEText
 # ─────────────────────────────────────────────
 # ✏️  YOUR SETTINGS — edit this section only
 # ─────────────────────────────────────────────
-EMAIL_FROM    = "yifanl0416@gmail.com"       # your Gmail address
-EMAIL_TO      = "yifanl0416@gmail.com"       # where to receive the digest
-EMAIL_APPPASS = "ryriihzxduotxlyr"        # Gmail App Password (16 chars)
+EMAIL_FROM    = ""       # your Gmail address
+EMAIL_TO      = ""       # where to receive the digest
+EMAIL_APPPASS = ""        # Gmail App Password (16 chars)
 
 # Job keywords tuned to your background
 SEARCH_QUERIES = [
