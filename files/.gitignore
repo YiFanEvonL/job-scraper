@@ -1,0 +1,10 @@
+# 保護敏感資料 — 不推上 GitHub
+.env
+
+# 資料庫（職缺記錄）
+seen_jobs.db
+
+# Python 暫存檔
+__pycache__/
+*.pyc
+.DS_Store
