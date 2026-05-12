@@ -48,6 +48,47 @@ EXCLUDE_TITLE_WORDS = [
     "principal", "staff", "vice president", "vp",
 ]
 
+# Keywords to match in job titles when scraping company career pages
+COMPANY_JOB_KEYWORDS = [
+    "developer", "programmer", "engineer", "software",
+    "analyst", "informatics", "data", "ehr", "healthcare",
+    "health", "clinical", "nursing", "systems",
+    "junior", "entry", "associate", "intern",
+]
+
+# Accepted locations for company career pages (substring match, case-insensitive)
+ACCEPTED_LOCATIONS = ["toronto", "ontario", "canada", "remote"]
+
+# Reject if location explicitly names a non-Canadian country/region
+# (takes precedence over "remote" — e.g. "US - Remote" is still rejected)
+REJECTED_LOCATIONS = [
+    "united states", "usa", " us,", "us -", ", us)",
+    "united kingdom", "u.k.", " uk,", "uk -", ", uk)",
+    "australia", "germany", "france", "netherlands",
+    "hungary", "belgium", "japan", "india", "mexico",
+    "brazil", "singapore", "ireland",
+]
+
+# ── Companies using Greenhouse ATS ──
+# Find more at: https://boards.greenhouse.io/{slug}
+GREENHOUSE_COMPANIES = {
+    "hootsuite":    "Hootsuite",
+    "d2l":          "D2L (Brightspace)",
+    "tulip":        "Tulip Retail",
+    "flipp":        "Flipp",
+    "mejuri":       "Mejuri",           # Toronto
+    "ecobee":       "Ecobee",           # Toronto smart home
+    "faire":        "Faire",
+}
+
+# ── Companies using Lever ATS ──
+# Find more at: https://jobs.lever.co/{slug}
+LEVER_COMPANIES = {
+    "pointclickcare":   "PointClickCare",  # Toronto health IT — great fit!
+    "fullscript":       "Fullscript",      # Ottawa health tech
+    "mednow":           "MedNow",          # Canada pharmacy tech
+}
+
 DB_FILE = Path(__file__).parent / "seen_jobs.db"
 # ─────────────────────────────────────────────
 
@@ -82,6 +123,22 @@ def mark_seen(conn, job_id, title, company):
 def is_excluded(title):
     title_lower = title.lower()
     return any(word in title_lower for word in EXCLUDE_TITLE_WORDS)
+
+
+def is_relevant_title(title):
+    title_lower = title.lower()
+    return any(kw in title_lower for kw in COMPANY_JOB_KEYWORDS)
+
+
+def is_accepted_location(location):
+    if not location:
+        return True
+    loc_lower = location.lower()
+    # Reject if explicitly a non-Canadian location (even if "remote" is present)
+    if any(rej in loc_lower for rej in REJECTED_LOCATIONS):
+        if not any(can in loc_lower for can in ["canada", "toronto", "ontario"]):
+            return False
+    return any(loc in loc_lower for loc in ACCEPTED_LOCATIONS)
 
 
 # ── Indeed (public RSS feed) ──────────────────
@@ -219,6 +276,79 @@ def scrape_jobbank(query):
     return jobs
 
 
+# ── Greenhouse ATS (public JSON API) ─────────────────────────────────────────
+def scrape_greenhouse(slug, company_name):
+    jobs = []
+    url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; JobSearchBot/1.0)"}
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"   Greenhouse [{slug}] HTTP {r.status_code}")
+            return jobs
+        for job in r.json().get("jobs", []):
+            title    = job.get("title", "").strip()
+            location = job.get("location", {}).get("name", "")
+            link     = job.get("absolute_url", "")
+            job_id   = f"greenhouse_{slug}_{job.get('id', '')}"
+
+            if not title or is_excluded(title):
+                continue
+            if not is_relevant_title(title):
+                continue
+            if not is_accepted_location(location):
+                continue
+
+            jobs.append({
+                "id":      job_id,
+                "title":   title,
+                "company": company_name,
+                "link":    link,
+                "source":  "Company Pages",
+                "snippet": location,
+            })
+    except Exception as e:
+        print(f"   Greenhouse [{slug}] error: {e}")
+    return jobs
+
+
+# ── Lever ATS (public JSON API) ──────────────────────────────────────────────
+def scrape_lever(slug, company_name):
+    jobs = []
+    url = f"https://api.lever.co/v0/postings/{slug}"
+    params  = {"mode": "json"}
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; JobSearchBot/1.0)"}
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"   Lever [{slug}] HTTP {r.status_code}")
+            return jobs
+        for job in r.json():
+            title    = job.get("text", "").strip()
+            location = job.get("categories", {}).get("location", "")
+            link     = job.get("hostedUrl", "")
+            job_id   = f"lever_{slug}_{job.get('id', '')}"
+
+            if not title or is_excluded(title):
+                continue
+            if not is_relevant_title(title):
+                continue
+            if not is_accepted_location(location):
+                continue
+
+            jobs.append({
+                "id":      job_id,
+                "title":   title,
+                "company": company_name,
+                "link":    link,
+                "source":  "Company Pages",
+                "snippet": location,
+            })
+    except Exception as e:
+        print(f"   Lever [{slug}] error: {e}")
+    return jobs
+
+
 def build_email_html(new_jobs):
     """Build a clean HTML email digest."""
     count = len(new_jobs)
@@ -334,6 +464,26 @@ def main():
                 print(f"   {source_name} error: {e}")
             time.sleep(1.5)   # be polite to servers
         time.sleep(2)
+
+    # ── Company career pages (Greenhouse + Lever) ──
+    print("\n🏢 Scraping company career pages...")
+    for slug, name in GREENHOUSE_COMPANIES.items():
+        jobs = scrape_greenhouse(slug, name)
+        print(f"   Greenhouse [{name}]: {len(jobs)} matched")
+        for job in jobs:
+            if job["id"] not in seen_ids and is_new(conn, job["id"]):
+                all_jobs.append(job)
+                seen_ids.add(job["id"])
+        time.sleep(1)
+
+    for slug, name in LEVER_COMPANIES.items():
+        jobs = scrape_lever(slug, name)
+        print(f"   Lever [{name}]: {len(jobs)} matched")
+        for job in jobs:
+            if job["id"] not in seen_ids and is_new(conn, job["id"]):
+                all_jobs.append(job)
+                seen_ids.add(job["id"])
+        time.sleep(1)
 
     print(f"\n📋 {len(all_jobs)} new jobs found across all platforms")
 
