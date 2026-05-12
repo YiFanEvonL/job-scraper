@@ -1,0 +1,6 @@
+.env
+seen_jobs.db
+__pycache__/
+*.pyc
+.DS_Store
+files.zip

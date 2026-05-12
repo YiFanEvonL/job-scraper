@@ -15,13 +15,18 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+load_dotenv(Path(__file__).parent / ".env")
 
 # ─────────────────────────────────────────────
 # ✏️  YOUR SETTINGS — edit this section only
 # ─────────────────────────────────────────────
-EMAIL_FROM    = ""       # your Gmail address
-EMAIL_TO      = ""       # where to receive the digest
-EMAIL_APPPASS = ""        # Gmail App Password (16 chars)
+EMAIL_FROM    = os.getenv("EMAIL_FROM")
+EMAIL_TO      = os.getenv("EMAIL_TO")
+EMAIL_APPPASS = os.getenv("EMAIL_APPPASS")
 
 # Job keywords tuned to your background
 SEARCH_QUERIES = [
@@ -43,7 +48,7 @@ EXCLUDE_TITLE_WORDS = [
     "principal", "staff", "vice president", "vp",
 ]
 
-DB_FILE = "seen_jobs.db"
+DB_FILE = Path(__file__).parent / "seen_jobs.db"
 # ─────────────────────────────────────────────
 
 
