@@ -1,138 +1,149 @@
-# 🍁 Toronto Job Scraper — 設定說明
+# 🍁 Toronto Job Scraper
 
-針對你的背景量身設計：護理 + 社會學 + Computer Programming
-目標職位：Junior Developer、Health Informatics、Clinical Analyst、Healthcare Data Analyst、Junior BA/SA
+An automated job scraper that collects junior/entry-level postings from multiple platforms daily, deduplicates them, and delivers a formatted email digest — purpose-built for a Healthcare IT / Data Analytics job search in Toronto.
+
+> Feeds the **[Toronto Job Market Dashboard](https://github.com/YiFanEvonL/job-market-dashboard)** · 1,100+ jobs tracked · Running since May 2026
 
 ---
 
-## 📦 Step 1：安裝 Python 套件
+## ✨ Features
 
-打開終端機（Terminal / Command Prompt），輸入：
+- **Multi-platform scraping** — Indeed, LinkedIn (RSS), Greenhouse, Lever, Job Bank Canada
+- **Smart deduplication** — SQLite-backed; never sends the same job twice
+- **Targeted keyword sets** — tuned for Healthcare IT, Clinical Informatics, Data Analytics, Junior Dev, and Admin roles
+- **Title filtering** — automatically excludes senior/lead/manager roles and unrelated industries (food service, real estate, etc.)
+- **Daily email digest** — HTML email with clickable job links, grouped by platform
+- **ATS keyword checker** — `ats_checker.py` scans your résumé `.docx` against a job's required keywords and reports hit rate
+- **Dashboard integration** — outputs feed directly into `prepare_dashboard_data.py` → `dashboard.html`
+- **Flexible scheduling** — cron, Python scheduler, or Windows Task Scheduler
+
+---
+
+## 🛠️ Tech Stack
+
+| | |
+|---|---|
+| Language | Python 3.11 |
+| HTTP | `requests` |
+| Storage | SQLite3 |
+| Email | `smtplib` · Gmail App Password |
+| Scheduling | `schedule` · cron |
+| ATS checker | `python-docx` |
+| Dashboard ETL | `pandas` |
+
+---
+
+## 🚀 Quick Start
+
+### 1. Install dependencies
 
 ```bash
-pip install requests schedule
+pip install requests schedule python-docx pandas python-dotenv
 ```
 
----
-
-## ✏️ Step 2：填入你的 Gmail 設定
-
-打開 `job_scraper.py`，找到最上面這段：
-
-```python
-EMAIL_FROM    = "your_gmail@gmail.com"     # ← 改成你的 Gmail
-EMAIL_TO      = "your_gmail@gmail.com"     # ← 改成收信的信箱（可以相同）
-EMAIL_APPPASS = "xxxx xxxx xxxx xxxx"      # ← 填入 Gmail App Password
-```
-
-### 如何取得 Gmail App Password：
-1. 前往 https://myaccount.google.com/security
-2. 啟用「兩步驟驗證」
-3. 搜尋「應用程式密碼」→「建立」
-4. 選擇「郵件」+ 你的裝置，複製那 16 個字元
-5. 貼入 `EMAIL_APPPASS`
-
----
-
-## ▶️ Step 3：先手動測試一次
+### 2. Configure credentials
 
 ```bash
-cd job_scraper
+cp .env.example .env
+```
+
+Edit `.env`:
+```
+EMAIL_FROM=your_gmail@gmail.com
+EMAIL_TO=your_gmail@gmail.com
+EMAIL_APPPASS=xxxx xxxx xxxx xxxx
+```
+
+> **How to get a Gmail App Password:**
+> Google Account → Security → 2-Step Verification → App Passwords → Create
+
+### 3. Run once (test)
+
+```bash
 python job_scraper.py
 ```
 
-成功的話你會看到：
-```
-==================================================
-  Job Scraper started — 2025-01-15 14:30
-==================================================
-🔍 Searching: junior developer Toronto
-   Indeed: 8 results
-   LinkedIn: 5 results
-   Job Bank: 3 results
-...
-✅ Email sent: 42 new jobs
-```
+Check your inbox — you should receive an email with today's new jobs.
 
-然後去收信匣確認有收到 email！
+### 4. Schedule daily runs
 
----
-
-## ⏰ Step 4：設定每天自動執行
-
-### 方法 A：Python scheduler（簡單，視窗要保持開著）
-
-```bash
-python scheduler.py
-```
-
-讓這個視窗繼續跑，每天早上 8:00 自動執行。
-
-### 方法 B：macOS/Linux cron（推薦，背景執行）
-
+**macOS / Linux (cron):**
 ```bash
 crontab -e
+# Add:
+0 8 * * * /usr/bin/python3 /path/to/job_scraper.py
 ```
 
-加入這一行（每天 8:00 AM 執行）：
+**Python scheduler (cross-platform):**
+```bash
+python scheduler.py   # runs at 08:00 daily, keep window open
 ```
-0 8 * * * /usr/bin/python3 /你的路徑/job_scraper/job_scraper.py
-```
-
-### 方法 C：Windows 工作排程器
-1. 搜尋「工作排程器」→「建立基本工作」
-2. 觸發程序：每天 08:00
-3. 動作：啟動程式 → `python.exe`
-4. 引數：`C:\你的路徑\job_scraper\job_scraper.py`
 
 ---
 
-## 📧 Email 長什麼樣子
+## 🎯 Customise Search Queries
 
-每天早上你會收到一封信，主旨像：
-**🍁 42 New Toronto Jobs — Jan 15**
-
-裡面依平台分組，每個職缺有：
-- 職位名稱（點擊直接開啟）
-- 公司名稱
-- Apply 按鈕
-
-只有「新職缺」才會出現，已經通知過的不會重複。
-
----
-
-## 🔧 客製化搜尋關鍵字
-
-打開 `job_scraper.py`，找到 `SEARCH_QUERIES` 列表，
-可以新增或刪除你想搜尋的關鍵字：
+Edit `SEARCH_QUERIES` in `job_scraper.py`:
 
 ```python
 SEARCH_QUERIES = [
     "junior developer Toronto",
     "health informatics analyst Toronto",
-    # 可以加你想要的：
+    "healthcare data analyst Toronto entry level",
+    "EHR analyst Toronto entry level",
+    # add your own:
     "clinical data analyst Toronto",
-    "junior full stack developer Toronto",
 ]
+```
+
+Add exclusions to `EXCLUDE_TITLE_WORDS` or `EXCLUDE_INDUSTRY_WORDS` to filter noise.
+
+---
+
+## 🧪 ATS Keyword Checker
+
+Check how well your résumé matches a job posting's required keywords:
+
+```bash
+python ats_checker.py "Yi-Fan Lin Resume.docx" "Python,ETL,SQL,PHIPA,clinical informatics"
+```
+
+Output:
+```
+  ✅  Python
+  ✅  ETL
+  ✅  SQL
+  ❌  PHIPA
+  ❌  clinical informatics
+
+ATS hit rate: 3/5 (60%)
 ```
 
 ---
 
-## 🗃️ 資料庫
+## 📁 Repo Structure
 
-程式會自動建立 `seen_jobs.db`，記錄已通知過的職缺。
-如果你想重置（重新收到所有職缺），刪除這個檔案即可。
+```
+├── job_scraper.py            # Main scraper — multi-platform, dedup, email
+├── scheduler.py              # Daily scheduler wrapper
+├── ats_checker.py            # Résumé keyword hit-rate checker
+├── prepare_dashboard_data.py # ETL: seen_jobs.db → CSV + dashboard.html
+├── .env.example              # Credential template
+├── .gitignore
+└── README.md
+```
+
+> `seen_jobs.db`, `scraper.log`, and `application_log.csv` are git-ignored (local only).
 
 ---
 
-## ❓ 常見問題
+## 🔗 Related
 
-**Q: 收不到 email？**
-→ 確認 App Password 是否正確（不是你的登入密碼）
-→ 確認 Gmail 兩步驟驗證已開啟
+- **[job-market-dashboard](https://github.com/YiFanEvonL/job-market-dashboard)** — interactive HTML dashboard visualising scraper output
 
-**Q: 結果太少？**
-→ 修改 `SEARCH_QUERIES` 加入更多關鍵字
+---
 
-**Q: 結果太多不相關？**
-→ 修改 `EXCLUDE_TITLE_WORDS` 加入要排除的字，例如 "nurse", "RN"
+## 👤 Author
+
+**Yi-Fan Lin** — RN turned software developer · Toronto, ON
+[GitHub](https://github.com/YiFanEvonL) · [LinkedIn](https://linkedin.com/in/yifanlin)

@@ -30,6 +30,7 @@ EMAIL_APPPASS = os.getenv("EMAIL_APPPASS")
 
 # Job keywords tuned to your background
 SEARCH_QUERIES = [
+    # ── Track A/B/C: Healthcare IT / Data / Junior Tech (existing) ──
     "junior developer Toronto",
     "junior software developer Toronto",
     "health informatics analyst Toronto",
@@ -40,6 +41,25 @@ SEARCH_QUERIES = [
     "nursing informatics Toronto",
     "junior programmer Toronto",
     "EHR analyst Toronto entry level",
+
+    # ── Entry-level Health Information Management / Records ──
+    "health information management coordinator Toronto",
+    "health information clerk Toronto",
+    "health records clerk Toronto",
+    "data coordinator hospital Toronto",
+    "data quality coordinator health Toronto",
+    "medical records clerk Toronto",
+
+    # ── Entry-level Clerical / Administrative (hospital & health org) ──
+    "clerical assistant hospital Toronto",
+    "administrative assistant healthcare Toronto",
+    "team assistant healthcare Toronto",
+    "unit clerk hospital Toronto",
+    "patient registration coordinator Toronto",
+    "patient access coordinator Toronto",
+    "scheduling coordinator healthcare Toronto",
+    "scheduling and registration coordinator Toronto",
+    "medical office assistant Toronto",
 ]
 
 # If ANY of these appear in a job title, it will be EXCLUDED
@@ -48,12 +68,53 @@ EXCLUDE_TITLE_WORDS = [
     "principal", "staff", "vice president", "vp",
 ]
 
+# If ANY of these appear in a job title, it will be EXCLUDED regardless of
+# other matches — used to filter out unrelated industries/roles that get
+# picked up by broad keyword matches (e.g. "assistant", "coordinator")
+EXCLUDE_INDUSTRY_WORDS = [
+    # Food & hospitality
+    "expeditor", "server", "bartender", "cook", "chef", "barista",
+    "host/hostess", "hostess", "waiter", "waitress", "dishwasher",
+    "kitchen", "restaurant", "banquet", "catering", "sommelier",
+
+    # Sales / Marketing / Real Estate
+    "sales representative", "sales associate", "account executive",
+    "marketing coordinator", "real estate", "leasing", "realtor",
+
+    # Enterprise SaaS / IT system admin (different track — NetSuite, Salesforce, etc.)
+    "enterprise application", "netsuite", "salesforce administrator",
+    "salesforce admin", "sap administrator", "workday administrator",
+
+    # Trades / Retail / Other unrelated
+    "warehouse", "forklift", "driver", "delivery driver",
+    "construction", "electrician", "plumber", "cashier",
+    "stylist", "esthetician", "personal trainer", "fitness instructor",
+]
+
+# Keywords that, if found in a job title alongside a generic word like
+# "assistant" / "coordinator" / "admin", confirm relevance to your target tracks
+RELEVANT_CONTEXT_WORDS = [
+    "health", "healthcare", "hospital", "clinical", "medical",
+    "patient", "nursing", "informatics", "records", "registration",
+    "scheduling", "data", "research", "pharmacy", "laboratory",
+]
+
 # Keywords to match in job titles when scraping company career pages
 COMPANY_JOB_KEYWORDS = [
+    # Technical / informatics
     "developer", "programmer", "engineer", "software",
     "analyst", "informatics", "data", "ehr", "healthcare",
     "health", "clinical", "nursing", "systems",
     "junior", "entry", "associate", "intern",
+
+    # Health Information Management / Records
+    "health information", "medical records", "registration coordinator", "data coordinator",
+
+    # Clerical / Administrative (kept specific to avoid false positives
+    # like "Enterprise Application Administrator" or restaurant "Assistant Manager")
+    "clerical assistant", "administrative assistant", "medical office assistant",
+    "patient access", "unit clerk", "scheduling coordinator",
+    "scheduling and registration",
 ]
 
 # Accepted locations for company career pages (substring match, case-insensitive)
@@ -103,6 +164,16 @@ def init_db():
             added_at TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS skipped_jobs (
+            job_id TEXT PRIMARY KEY,
+            title TEXT,
+            company TEXT,
+            source TEXT,
+            skip_reason TEXT,
+            skipped_at TEXT
+        )
+    """)
     conn.commit()
     return conn
 
@@ -120,9 +191,57 @@ def mark_seen(conn, job_id, title, company):
     conn.commit()
 
 
+def log_skipped_job(conn, job_id, title, company, source, reason):
+    if conn is None:
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO skipped_jobs VALUES (?,?,?,?,?,?)",
+        (job_id, title, company, source, reason, datetime.now().isoformat())
+    )
+    conn.commit()
+
+
 def is_excluded(title):
     title_lower = title.lower()
-    return any(word in title_lower for word in EXCLUDE_TITLE_WORDS)
+    if any(word in title_lower for word in EXCLUDE_TITLE_WORDS):
+        return True
+    if any(word in title_lower for word in EXCLUDE_INDUSTRY_WORDS):
+        return True
+    return False
+
+
+def get_exclusion_reason(title):
+    """Return 'excluded_title', 'excluded_industry', or None."""
+    title_lower = title.lower()
+    if any(word in title_lower for word in EXCLUDE_TITLE_WORDS):
+        return "excluded_title"
+    if any(word in title_lower for word in EXCLUDE_INDUSTRY_WORDS):
+        return "excluded_industry"
+    return None
+
+
+# Generic title words that are ambiguous on their own — if a title contains
+# ONE of these AND nothing from RELEVANT_CONTEXT_WORDS, it's likely an
+# unrelated role (e.g. "Administrative Assistant" at a law firm, "Assistant
+# Manager" at a retail store) and gets filtered out.
+AMBIGUOUS_GENERIC_WORDS = [
+    "assistant", "coordinator", "administrator", "admin", "clerk",
+]
+
+
+def passes_relevance_filter(title):
+    """Return True if the title should be kept.
+
+    Titles containing a generic word (assistant/coordinator/admin/clerk)
+    must also contain at least one relevant-context word (health, clinical,
+    data, records, etc.) to be kept. Titles without any ambiguous generic
+    word pass through unaffected (e.g. "Junior Developer Toronto").
+    """
+    title_lower = title.lower()
+    has_generic = any(word in title_lower for word in AMBIGUOUS_GENERIC_WORDS)
+    if not has_generic:
+        return True
+    return any(word in title_lower for word in RELEVANT_CONTEXT_WORDS)
 
 
 def is_relevant_title(title):
@@ -142,7 +261,7 @@ def is_accepted_location(location):
 
 
 # ── Indeed (public RSS feed) ──────────────────
-def scrape_indeed(query):
+def scrape_indeed(query, conn=None):
     jobs = []
     url = "https://ca.indeed.com/rss"
     params = {
@@ -168,74 +287,64 @@ def scrape_indeed(query):
             desc = re.sub(r"<[^>]+>", "", desc)[:300]
             job_id  = "indeed_" + link[-40:].replace("/", "_")
 
-            if title and not is_excluded(title):
-                jobs.append({
-                    "id": job_id,
-                    "title": title,
-                    "company": company,
-                    "link": link,
-                    "source": "Indeed",
-                    "snippet": desc,
-                })
+            if title:
+                exc_reason = get_exclusion_reason(title)
+                if exc_reason:
+                    log_skipped_job(conn, job_id, title, company, "Indeed", exc_reason)
+                elif not passes_relevance_filter(title):
+                    log_skipped_job(conn, job_id, title, company, "Indeed", "failed_relevance")
+                else:
+                    jobs.append({
+                        "id": job_id,
+                        "title": title,
+                        "company": company,
+                        "link": link,
+                        "source": "Indeed",
+                        "snippet": desc,
+                    })
     except Exception as e:
         print(f"Indeed error: {e}")
     return jobs
 
 
-# ── LinkedIn (guest API — more reliable) ──
-def scrape_linkedin(query):
+# ── LinkedIn (RSS feed — official, no login required) ──
+def scrape_linkedin_rss(query, conn=None):
     jobs = []
-    url = "https://www.linkedin.com/jobs/search"
-    params = {
-        "keywords": query,
-        "location": "Toronto, Ontario, Canada",
-        "f_TPR": "r86400",   # past 24 hours
-        "f_E": "1,2",        # entry level + internship
-        "position": "1",
-        "pageNum": "0",
-    }
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "en-CA,en;q=0.9",
-    }
+    q = query.replace(" ", "%20")
+    url = f"https://www.linkedin.com/jobs/search?keywords={q}&location=Toronto%2C+Ontario%2C+Canada&f_TPR=r86400&position=1&pageNum=0&format=rss"
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        r = requests.get(url, params=params, headers=headers, timeout=15)
-
-        # Extract job IDs
-        job_ids = re.findall(r'data-entity-urn="urn:li:jobPosting:(\d+)"', r.text)
-        # Extract titles — LinkedIn uses these class patterns
-        titles = re.findall(
-            r'class="base-search-card__title"[^>]*>\s*([^<]+?)\s*<', r.text
-        )
-        companies = re.findall(
-            r'class="base-search-card__subtitle"[^>]*>.*?<a[^>]*>\s*([^<]+?)\s*<',
-            r.text, re.DOTALL
-        )
-
-        for i, jid in enumerate(job_ids[:15]):
-            title   = titles[i].strip()   if i < len(titles)    else ""
-            company = companies[i].strip() if i < len(companies) else "Unknown"
-            if not title or is_excluded(title):
+        r = requests.get(url, headers=headers, timeout=15)
+        root = ET.fromstring(r.text)
+        for item in root.findall(".//item")[:15]:
+            title   = item.findtext("title", "").strip()
+            link    = item.findtext("link", "").strip()
+            company = item.findtext("source", "Unknown").strip()
+            job_id  = "linkedin_rss_" + re.sub(r'\W+', '_', link[-20:])
+            if not title:
+                continue
+            exc_reason = get_exclusion_reason(title)
+            if exc_reason:
+                log_skipped_job(conn, job_id, title, company, "LinkedIn", exc_reason)
+                continue
+            if not passes_relevance_filter(title):
+                log_skipped_job(conn, job_id, title, company, "LinkedIn", "failed_relevance")
                 continue
             jobs.append({
-                "id": f"linkedin_{jid}",
+                "id": job_id,
                 "title": title,
                 "company": company,
-                "link": f"https://www.linkedin.com/jobs/view/{jid}",
+                "link": link,
                 "source": "LinkedIn",
                 "snippet": "",
             })
     except Exception as e:
-        print(f"LinkedIn error: {e}")
+        print(f"LinkedIn RSS error: {e}")
     return jobs
 
 
 # ── Job Bank Canada (official government job board) ──
-def scrape_jobbank(query):
+def scrape_jobbank(query, conn=None):
     jobs = []
     url = "https://www.jobbank.gc.ca/jobsearch/jobsearch"
     params = {
@@ -262,22 +371,28 @@ def scrape_jobbank(query):
             company = company_m.group(1).strip() if company_m else "Unknown"
             link    = ("https://www.jobbank.gc.ca" + link_m.group(1)) if link_m else ""
             job_id  = "jobbank_" + re.search(r'/(\d+)', link).group(1) if link and re.search(r'/(\d+)', link) else ""
-            if title and job_id and not is_excluded(title):
-                jobs.append({
-                    "id": job_id,
-                    "title": title,
-                    "company": company,
-                    "link": link,
-                    "source": "Job Bank CA",
-                    "snippet": "",
-                })
+            if title and job_id:
+                exc_reason = get_exclusion_reason(title)
+                if exc_reason:
+                    log_skipped_job(conn, job_id, title, company, "Job Bank CA", exc_reason)
+                elif not passes_relevance_filter(title):
+                    log_skipped_job(conn, job_id, title, company, "Job Bank CA", "failed_relevance")
+                else:
+                    jobs.append({
+                        "id": job_id,
+                        "title": title,
+                        "company": company,
+                        "link": link,
+                        "source": "Job Bank CA",
+                        "snippet": "",
+                    })
     except Exception as e:
         print(f"Job Bank error: {e}")
     return jobs
 
 
 # ── Greenhouse ATS (public JSON API) ─────────────────────────────────────────
-def scrape_greenhouse(slug, company_name):
+def scrape_greenhouse(slug, company_name, conn=None):
     jobs = []
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
     headers = {"User-Agent": "Mozilla/5.0 (compatible; JobSearchBot/1.0)"}
@@ -292,7 +407,11 @@ def scrape_greenhouse(slug, company_name):
             link     = job.get("absolute_url", "")
             job_id   = f"greenhouse_{slug}_{job.get('id', '')}"
 
-            if not title or is_excluded(title):
+            if not title:
+                continue
+            exc_reason = get_exclusion_reason(title)
+            if exc_reason:
+                log_skipped_job(conn, job_id, title, company_name, "Company Pages", exc_reason)
                 continue
             if not is_relevant_title(title):
                 continue
@@ -313,7 +432,7 @@ def scrape_greenhouse(slug, company_name):
 
 
 # ── Lever ATS (public JSON API) ──────────────────────────────────────────────
-def scrape_lever(slug, company_name):
+def scrape_lever(slug, company_name, conn=None):
     jobs = []
     url = f"https://api.lever.co/v0/postings/{slug}"
     params  = {"mode": "json"}
@@ -329,7 +448,11 @@ def scrape_lever(slug, company_name):
             link     = job.get("hostedUrl", "")
             job_id   = f"lever_{slug}_{job.get('id', '')}"
 
-            if not title or is_excluded(title):
+            if not title:
+                continue
+            exc_reason = get_exclusion_reason(title)
+            if exc_reason:
+                log_skipped_job(conn, job_id, title, company_name, "Company Pages", exc_reason)
                 continue
             if not is_relevant_title(title):
                 continue
@@ -391,7 +514,8 @@ def build_email_html(new_jobs):
 
       <div style="background:#fff5e6;padding:12px 20px;border-left:4px solid #f59e0b;margin:16px 0">
         <strong>Your target roles:</strong> Junior Developer · Health Informatics · Clinical Analyst ·
-        Healthcare Data Analyst · Junior BA/SA
+        Healthcare Data Analyst · Junior BA/SA · Health Information Management Coordinator ·
+        Health Records / Data Coordinator · Clerical / Administrative / Team Assistant (Healthcare)
       </div>
 
       <table width="100%" cellpadding="0" cellspacing="0"
@@ -446,7 +570,7 @@ def main():
 
     scrapers = [
         ("Indeed",   scrape_indeed),
-        ("LinkedIn", scrape_linkedin),
+        ("LinkedIn", scrape_linkedin_rss),
         ("Job Bank", scrape_jobbank),
     ]
 
@@ -454,7 +578,7 @@ def main():
         print(f"\n🔍 Searching: {query}")
         for source_name, scraper_fn in scrapers:
             try:
-                jobs = scraper_fn(query)
+                jobs = scraper_fn(query, conn)
                 print(f"   {source_name}: {len(jobs)} results")
                 for job in jobs:
                     if job["id"] not in seen_ids and is_new(conn, job["id"]):
@@ -468,7 +592,7 @@ def main():
     # ── Company career pages (Greenhouse + Lever) ──
     print("\n🏢 Scraping company career pages...")
     for slug, name in GREENHOUSE_COMPANIES.items():
-        jobs = scrape_greenhouse(slug, name)
+        jobs = scrape_greenhouse(slug, name, conn)
         print(f"   Greenhouse [{name}]: {len(jobs)} matched")
         for job in jobs:
             if job["id"] not in seen_ids and is_new(conn, job["id"]):
@@ -477,7 +601,7 @@ def main():
         time.sleep(1)
 
     for slug, name in LEVER_COMPANIES.items():
-        jobs = scrape_lever(slug, name)
+        jobs = scrape_lever(slug, name, conn)
         print(f"   Lever [{name}]: {len(jobs)} matched")
         for job in jobs:
             if job["id"] not in seen_ids and is_new(conn, job["id"]):
