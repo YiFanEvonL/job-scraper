@@ -1,0 +1,42 @@
+name: Daily Job Scraper
+
+on:
+  schedule:
+    # 12:00 UTC = 8:00 AM Toronto time during EDT (summer).
+    # During EST (winter) this runs at 7:00 AM Toronto time instead —
+    # GitHub Actions cron always runs on UTC, it does not follow DST.
+    - cron: "0 12 * * *"
+  workflow_dispatch: {}   # lets you manually trigger a run from the Actions tab
+
+permissions:
+  contents: write   # needed so the workflow can commit seen_jobs.db back
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run job scraper
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_APPPASS: ${{ secrets.EMAIL_APPPASS }}
+        run: python job_scraper.py
+
+      - name: Commit updated seen_jobs.db
+        run: |
+          git config user.name "job-scraper-bot"
+          git config user.email "actions@github.com"
+          git add seen_jobs.db
+          git diff --cached --quiet || git commit -m "Update seen_jobs.db [skip ci]"
+          git push

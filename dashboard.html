@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Toronto Job Search Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f4f8; color: #1a202c; min-height: 100vh;
+    }
+    header {
+      background: linear-gradient(135deg, #1a56db 0%, #1e3a8a 100%);
+      color: white; padding: 28px 40px;
+    }
+    header h1 { font-size: 1.75rem; font-weight: 700; }
+    header p  { margin-top: 6px; opacity: 0.85; font-size: 0.95rem; }
+
+    .stats-row {
+      display: flex; gap: 20px; padding: 28px 40px 0; flex-wrap: wrap;
+    }
+    .stat-card {
+      background: white; border-radius: 12px; padding: 20px 28px;
+      flex: 1; min-width: 160px; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      border-top: 4px solid #1a56db;
+    }
+    .stat-card .value { font-size: 2rem; font-weight: 700; color: #1a56db; }
+    .stat-card .label { font-size: 0.8rem; color: #64748b; margin-top: 4px;
+                        text-transform: uppercase; letter-spacing: .05em; }
+
+    .grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 24px; padding: 28px 40px 0;
+    }
+    .card {
+      background: white; border-radius: 12px; padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .card.full { grid-column: 1 / -1; }
+    .card h2 {
+      font-size: 1rem; font-weight: 600; color: #374151;
+      margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;
+    }
+    .chart-wrap { position: relative; }
+    .chart-wrap.tall  { height: 300px; }
+    .chart-wrap.short { height: 270px; }
+    .chart-note {
+      margin-top: 10px; font-size: 0.78rem; color: #94a3b8; font-style: italic;
+    }
+
+    /* Application Tracker */
+    .tracker-wrap { padding: 0 40px 40px; }
+    .tracker-card {
+      background: white; border-radius: 12px; padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-top: 24px;
+    }
+    .tracker-card h2 {
+      font-size: 1rem; font-weight: 600; color: #374151;
+      margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;
+    }
+    .app-summary {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+    }
+    .app-stat {
+      border-radius: 8px; padding: 12px 20px; text-align: center;
+      flex: 1; min-width: 100px;
+    }
+    .app-stat .s-value { font-size: 1.6rem; font-weight: 700; }
+    .app-stat .s-label { font-size: 0.75rem; margin-top: 2px; opacity: 0.85; }
+    .app-stat.applied      { background: #eff6ff; color: #1a56db; }
+    .app-stat.phone-screen { background: #fffbeb; color: #b45309; }
+    .app-stat.interview    { background: #f5f3ff; color: #7c3aed; }
+    .app-stat.offer        { background: #ecfdf5; color: #059669; }
+    .app-stat.rejected     { background: #f8fafc; color: #64748b; }
+
+    .app-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    .app-table th {
+      text-align: left; padding: 10px 12px; border-bottom: 2px solid #e5e7eb;
+      color: #374151; font-weight: 600; background: #f9fafb;
+    }
+    .app-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #374151; }
+    .app-table tr:last-child td { border-bottom: none; }
+    .app-table tr:hover td { background: #f9fafb; }
+    .notes-cell { color: #94a3b8; font-style: italic; }
+    .empty-msg  { text-align: center; color: #94a3b8; padding: 24px; }
+
+    .badge {
+      display: inline-block; padding: 3px 10px; border-radius: 99px;
+      font-size: 0.75rem; font-weight: 600;
+    }
+    .badge-applied      { background: #dbeafe; color: #1a56db; }
+    .badge-phone-screen { background: #fef3c7; color: #b45309; }
+    .badge-interview    { background: #ede9fe; color: #7c3aed; }
+    .badge-offer        { background: #d1fae5; color: #059669; }
+    .badge-rejected     { background: #f1f5f9; color: #64748b; }
+
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .card.full { grid-column: auto; }
+      header, .stats-row, .grid, .tracker-wrap { padding-left: 20px; padding-right: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🍁 Toronto Job Search Dashboard</h1>
+  <p>Junior &amp; entry-level positions · Healthcare IT · Informatics · Admin</p>
+</header>
+
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="value">1,142</div>
+    <div class="label">Total Jobs Tracked</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">36</div>
+    <div class="label">Days Monitored</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">31.7</div>
+    <div class="label">Avg Jobs / Day</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">5</div>
+    <div class="label">Applications Sent</div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <div class="card full">
+    <h2>📅 Daily New Jobs</h2>
+    <div class="chart-wrap tall">
+      <canvas id="chartDaily"></canvas>
+    </div>
+    <p class="chart-note">
+      Weekday peaks reflect active job posting patterns;
+      scraper has been running daily since May 8, 2026
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>🔵 Source Distribution</h2>
+    <div class="chart-wrap short">
+      <canvas id="chartPie"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📊 Job Category Breakdown</h2>
+    <div class="chart-wrap short">
+      <canvas id="chartBar"></canvas>
+    </div>
+  </div>
+
+  <div class="card full">
+    <h2>📈 Weekly Trend</h2>
+    <div class="chart-wrap tall">
+      <canvas id="chartWeekly"></canvas>
+    </div>
+  </div>
+
+</div>
+
+<div class="tracker-wrap">
+  <div class="tracker-card">
+    <h2>📋 Application Tracker</h2>
+    <div class="app-summary">
+      <div class="app-stat applied">
+          <div class="s-value">5</div>
+          <div class="s-label">Applied</div>
+        </div><div class="app-stat phone-screen">
+          <div class="s-value">0</div>
+          <div class="s-label">Phone Screen</div>
+        </div><div class="app-stat interview">
+          <div class="s-value">0</div>
+          <div class="s-label">Interview</div>
+        </div><div class="app-stat offer">
+          <div class="s-value">0</div>
+          <div class="s-label">Offer</div>
+        </div><div class="app-stat rejected">
+          <div class="s-value">0</div>
+          <div class="s-label">Rejected</div>
+        </div>
+    </div>
+    <table class="app-table">
+      <thead>
+        <tr>
+          <th>Company</th>
+          <th>Job Title</th>
+          <th>Applied</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>PointClickCare</td>
+          <td>Revenue Enablement Systems Associate</td>
+          <td>2026-06-14</td>
+          <td>Lever</td>
+          <td><span class="badge badge-applied">Applied</span></td>
+          <td class="notes-cell">Found via scraper</td>
+        </tr><tr>
+          <td>D2L (Brightspace)</td>
+          <td>Product Support Analyst</td>
+          <td>2026-06-15</td>
+          <td>Greenhouse</td>
+          <td><span class="badge badge-applied">Applied</span></td>
+          <td class="notes-cell"></td>
+        </tr><tr>
+          <td>SickKids</td>
+          <td>Project Coordinator</td>
+          <td>2026-05-31</td>
+          <td>LinkedIn</td>
+          <td><span class="badge badge-applied">Applied</span></td>
+          <td class="notes-cell">Found via scraper</td>
+        </tr><tr>
+          <td>CAMH</td>
+          <td>Research Analyst TAY</td>
+          <td>2026-05-14</td>
+          <td>LinkedIn</td>
+          <td><span class="badge badge-applied">Applied</span></td>
+          <td class="notes-cell"></td>
+        </tr><tr>
+          <td>William Osler</td>
+          <td>Epic Applications Analyst</td>
+          <td>2026-05-27</td>
+          <td>LinkedIn</td>
+          <td><span class="badge badge-applied">Applied</span></td>
+          <td class="notes-cell"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+Chart.defaults.font.size   = 12;
+Chart.defaults.color       = "#64748b";
+
+const dailyLabels  = ["May 08", "May 12", "May 13", "May 14", "May 15", "May 16", "May 17", "May 18", "May 19", "May 20", "May 21", "May 22", "May 23", "May 24", "May 25", "May 26", "May 27", "May 28", "May 29", "May 30", "May 31", "Jun 01", "Jun 02", "Jun 03", "Jun 04", "Jun 05", "Jun 06", "Jun 07", "Jun 08", "Jun 10", "Jun 11", "Jun 12", "Jun 13", "Jun 14", "Jun 15", "Jun 16"];
+const dailyCounts  = [35, 20, 47, 30, 28, 27, 11, 6, 11, 13, 30, 48, 25, 19, 23, 15, 30, 55, 46, 36, 19, 25, 48, 23, 44, 49, 39, 4, 12, 32, 29, 36, 31, 59, 62, 75];
+const sourceLabels = ["LinkedIn", "Greenhouse", "Lever"];
+const sourceCounts = [1113, 15, 14];
+const catLabels    = ["Software / Tech", "Other", "Analyst / BA / SA", "Healthcare IT / Clinical", "Co-op / Intern", "Data / Analytics", "Admin / Clerical"];
+const catCounts    = [431, 286, 271, 54, 53, 40, 7];
+const catColors    = ["#1a56db", "#94a3b8", "#3b82f6", "#10b981", "#93c5fd", "#60a5fa", "#bfdbfe"];
+const weekLabels   = ["May 04\u2013May 10", "May 11\u2013May 17", "May 18\u2013May 24", "May 25\u2013May 31", "Jun 01\u2013Jun 07", "Jun 08\u2013Jun 14", "Jun 15\u2013Jun 21"];
+const weekCounts   = [35, 163, 152, 224, 232, 199, 137];
+
+const BLUE = "#1a56db";
+
+// Chart 1: Daily
+new Chart(document.getElementById("chartDaily"), {
+  type: "line",
+  data: {
+    labels: dailyLabels,
+    datasets: [{
+      label: "New Jobs",
+      data: dailyCounts,
+      borderColor: BLUE,
+      backgroundColor: "rgba(26,86,219,.08)",
+      borderWidth: 2.5,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      pointBackgroundColor: BLUE,
+      fill: true,
+      tension: 0.35,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      datalabels: { display: false },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} new jobs` } }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxRotation: 45 } },
+      y: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { stepSize: 10 } }
+    }
+  }
+});
+
+// Chart 2: Pie — percentages shown on slices + legend
+const pieTotal = sourceCounts.reduce((a, b) => a + b, 0);
+new Chart(document.getElementById("chartPie"), {
+  type: "doughnut",
+  plugins: [ChartDataLabels],
+  data: {
+    labels: sourceLabels,
+    datasets: [{
+      data: sourceCounts,
+      backgroundColor: ["#1a56db", "#f59e0b", "#10b981"],
+      borderWidth: 2,
+      borderColor: "#fff",
+      hoverOffset: 8,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: "right",
+        labels: {
+          padding: 16,
+          usePointStyle: true,
+          generateLabels: chart => {
+            const ds = chart.data.datasets[0];
+            const total = ds.data.reduce((a, b) => a + b, 0);
+            return chart.data.labels.map((label, i) => ({
+              text: `${label}  ${((ds.data[i] / total) * 100).toFixed(1)}%`,
+              fillStyle: ds.backgroundColor[i],
+              strokeStyle: "#fff",
+              lineWidth: 2,
+              pointStyle: "circle",
+              hidden: false,
+              index: i,
+            }));
+          }
+        }
+      },
+      datalabels: {
+        color: "#fff",
+        font: { weight: "bold", size: 14 },
+        formatter: (value) => {
+          const pct = ((value / pieTotal) * 100).toFixed(1);
+          return pct + "%";
+        },
+        display: ctx => (ctx.dataset.data[ctx.dataIndex] / pieTotal) > 0.04,
+      },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const pct = ((ctx.parsed / pieTotal) * 100).toFixed(1);
+            return ` ${ctx.label}: ${ctx.parsed.toLocaleString()} (${pct}%)`;
+          }
+        }
+      }
+    }
+  }
+});
+
+// Chart 3: Bar (horizontal)
+new Chart(document.getElementById("chartBar"), {
+  type: "bar",
+  data: {
+    labels: catLabels,
+    datasets: [{
+      label: "Jobs",
+      data: catCounts,
+      backgroundColor: catColors,
+      borderRadius: 6,
+      borderSkipped: false,
+    }]
+  },
+  options: {
+    indexAxis: "y",
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      datalabels: { display: false },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.x} jobs` } }
+    },
+    scales: {
+      x: { beginAtZero: true, grid: { color: "#f1f5f9" } },
+      y: { grid: { display: false } }
+    }
+  }
+});
+
+// Chart 4: Weekly
+new Chart(document.getElementById("chartWeekly"), {
+  type: "line",
+  data: {
+    labels: weekLabels,
+    datasets: [{
+      label: "Jobs per Week",
+      data: weekCounts,
+      borderColor: "#f59e0b",
+      backgroundColor: "rgba(245,158,11,.08)",
+      borderWidth: 2.5,
+      pointRadius: 6,
+      pointHoverRadius: 8,
+      pointBackgroundColor: "#f59e0b",
+      fill: true,
+      tension: 0.3,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      datalabels: { display: false },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} jobs that week` } }
+    },
+    scales: {
+      x: { grid: { display: false } },
+      y: { beginAtZero: true, grid: { color: "#f1f5f9" }, ticks: { stepSize: 50 } }
+    }
+  }
+});
+</script>
+</body>
+</html>

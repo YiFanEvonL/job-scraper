@@ -10,6 +10,7 @@ import sqlite3
 import smtplib
 import json
 import time
+import random
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -60,6 +61,30 @@ SEARCH_QUERIES = [
     "scheduling coordinator healthcare Toronto",
     "scheduling and registration coordinator Toronto",
     "medical office assistant Toronto",
+
+    # ── Help Desk / IT Support (stepping stone into Healthcare IT) ──
+    "IT support analyst Toronto",
+    "help desk analyst Toronto",
+    "service desk analyst Toronto",
+    "desktop support Toronto",
+    "application support analyst Toronto",
+    "IT technician Toronto entry level",
+    "level 1 IT support Toronto",
+    "level 2 IT support Toronto",
+    "healthcare IT support Toronto",
+
+    # ── Data / ETL ──
+    "junior data analyst Toronto",
+    "ETL developer junior Toronto",
+    "BI analyst Toronto entry level",
+    "reporting analyst Toronto",
+    "junior SQL developer Toronto",
+
+    # ── QA / Junior Dev ──
+    "QA analyst Toronto",
+    "QA tester Toronto entry level",
+    "test analyst Toronto",
+    "junior software QA engineer Toronto",
 ]
 
 # If ANY of these appear in a job title, it will be EXCLUDED
@@ -97,6 +122,9 @@ RELEVANT_CONTEXT_WORDS = [
     "health", "healthcare", "hospital", "clinical", "medical",
     "patient", "nursing", "informatics", "records", "registration",
     "scheduling", "data", "research", "pharmacy", "laboratory",
+    "support", "help desk", "service desk", "it support", "desktop",
+    "application support", "qa", "quality assurance", "test", "sql",
+    "etl", "reporting", "bi",
 ]
 
 # Keywords to match in job titles when scraping company career pages
@@ -115,6 +143,14 @@ COMPANY_JOB_KEYWORDS = [
     "clerical assistant", "administrative assistant", "medical office assistant",
     "patient access", "unit clerk", "scheduling coordinator",
     "scheduling and registration",
+
+    # Help Desk / IT Support
+    "help desk", "service desk", "it support", "desktop support",
+    "application support", "it technician", "technical support",
+
+    # Data / ETL / QA
+    "etl", "reporting analyst", "bi analyst", "sql developer",
+    "qa analyst", "qa tester", "test analyst", "quality assurance",
 ]
 
 # Accepted locations for company career pages (substring match, case-insensitive)
@@ -307,39 +343,59 @@ def scrape_indeed(query, conn=None):
     return jobs
 
 
-# ── LinkedIn (RSS feed — official, no login required) ──
+# ── LinkedIn (HTML scraping — guest search page) ──
 def scrape_linkedin_rss(query, conn=None):
     jobs = []
-    q = query.replace(" ", "%20")
-    url = f"https://www.linkedin.com/jobs/search?keywords={q}&location=Toronto%2C+Ontario%2C+Canada&f_TPR=r86400&position=1&pageNum=0&format=rss"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    url = "https://www.linkedin.com/jobs/search"
+    params = {
+        "keywords": query,
+        "location": "Toronto, Ontario, Canada",
+        "f_TPR": "r86400",
+        "f_E": "1,2",
+        "position": "1",
+        "pageNum": "0",
+    }
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-CA,en;q=0.9",
+    }
     try:
-        r = requests.get(url, headers=headers, timeout=15)
-        root = ET.fromstring(r.text)
-        for item in root.findall(".//item")[:15]:
-            title   = item.findtext("title", "").strip()
-            link    = item.findtext("link", "").strip()
-            company = item.findtext("source", "Unknown").strip()
-            job_id  = "linkedin_rss_" + re.sub(r'\W+', '_', link[-20:])
+        r = requests.get(url, params=params, headers=headers, timeout=15)
+        job_ids = re.findall(r'data-entity-urn="urn:li:jobPosting:(\d+)"', r.text)
+        titles = re.findall(
+            r'class="base-search-card__title"[^>]*>\s*([^<]+?)\s*<', r.text
+        )
+        companies = re.findall(
+            r'class="base-search-card__subtitle"[^>]*>.*?<a[^>]*>\s*([^<]+?)\s*<',
+            r.text, re.DOTALL
+        )
+        for i, jid in enumerate(job_ids[:15]):
+            title   = titles[i].strip()   if i < len(titles)    else ""
+            company = companies[i].strip() if i < len(companies) else "Unknown"
             if not title:
                 continue
             exc_reason = get_exclusion_reason(title)
             if exc_reason:
-                log_skipped_job(conn, job_id, title, company, "LinkedIn", exc_reason)
+                log_skipped_job(conn, f"linkedin_{jid}", title, company, "LinkedIn", exc_reason)
                 continue
             if not passes_relevance_filter(title):
-                log_skipped_job(conn, job_id, title, company, "LinkedIn", "failed_relevance")
+                log_skipped_job(conn, f"linkedin_{jid}", title, company, "LinkedIn", "failed_relevance")
                 continue
             jobs.append({
-                "id": job_id,
+                "id": f"linkedin_{jid}",
                 "title": title,
                 "company": company,
-                "link": link,
+                "link": f"https://www.linkedin.com/jobs/view/{jid}",
                 "source": "LinkedIn",
                 "snippet": "",
             })
     except Exception as e:
-        print(f"LinkedIn RSS error: {e}")
+        print(f"LinkedIn error: {e}")
+    time.sleep(random.uniform(3, 5))
     return jobs
 
 
@@ -515,7 +571,8 @@ def build_email_html(new_jobs):
       <div style="background:#fff5e6;padding:12px 20px;border-left:4px solid #f59e0b;margin:16px 0">
         <strong>Your target roles:</strong> Junior Developer · Health Informatics · Clinical Analyst ·
         Healthcare Data Analyst · Junior BA/SA · Health Information Management Coordinator ·
-        Health Records / Data Coordinator · Clerical / Administrative / Team Assistant (Healthcare)
+        Health Records / Data Coordinator · Clerical / Administrative / Team Assistant (Healthcare) ·
+        Help Desk / IT Support · Junior Data / ETL / BI Analyst · QA Analyst / Tester
       </div>
 
       <table width="100%" cellpadding="0" cellspacing="0"
